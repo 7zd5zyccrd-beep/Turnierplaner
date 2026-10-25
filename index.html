@@ -49,7 +49,8 @@ main{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
 .empty{text-align:center;padding:36px 20px;color:var(--muted)}
 .empty-ic{font-size:44px;margin-bottom:8px}
 .empty b{color:var(--text);font-size:17px}
-.ver{text-align:center;color:var(--muted);font-size:12px;margin-top:32px}
+.ver{text-align:center;color:var(--muted);font-size:12px;margin-top:4px}
+.upd{display:block;margin:28px auto 0;padding:10px 16px}
 /* Formular */
 .field{margin-bottom:18px}
 .lbl{font-size:14px;font-weight:600;color:var(--muted);margin:0 4px 6px;display:block}
@@ -201,7 +202,7 @@ main{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
 <script>
 (()=>{
 'use strict';
-const VERSION='0.2', KEY='turnierplaner.v1';
+const VERSION='0.3', KEY='turnierplaner.v1';
 const PALETTE=['#0a84ff','#e5484d','#30a46c','#f5a524','#8e4ec6','#12a5a5','#f76b15','#d6409f','#795548','#64748b'];
 const SPORTS={
   fb:{name:'Fußball',icon:'⚽',kind:'goals',unit:'Tore',dur:10,pts:'3-1-0',ptsOpts:['3-1-0','2-1-0'],tb:['diff','for','h2h'],draw:true},
@@ -406,6 +407,7 @@ function vHome(){
   <button class="btn ghost xl" data-a="newSingle">Einzelspiel</button>
   ${items.length?`<div class="sec">Deine Turniere und Spiele</div><div class="list">${items.map(card).join('')}</div>`
   :`<div class="empty"><div class="empty-ic">🏆</div><b>Noch nichts angelegt</b><p>Tippe auf „Neues Turnier“ – in drei Schritten steht der Spielplan.</p></div>`}
+  <button class="link-s upd" data-a="update">↻ App aktualisieren</button>
   <div class="ver">Turnierplaner · Version ${VERSION}</div></main>`;
 }
 
@@ -622,6 +624,16 @@ const A={
   delTeam(el){wz.teams.splice(+el.dataset.i,1);render()},
   cycleColor(el){const x=wz.teams[+el.dataset.i];x.color=PALETTE[(PALETTE.indexOf(x.color)+1)%PALETTE.length];render()},
   tab(el){st.tab=el.dataset.k;st.reo=false;render();scrollTo(0,0)},
+  async update(){
+    const fresh=location.pathname+'?v='+Date.now();
+    toast('Suche nach neuer Version …');
+    try{
+      const tx=await (await fetch(fresh,{cache:'no-store'})).text();
+      const m=tx.match(/const VERSION='([^']+)'/);
+      if(m&&m[1]===VERSION){toast('Version '+VERSION+' ist bereits die neueste');return}
+    }catch(_){}
+    location.replace(fresh);
+  },
   reo(){st.reo=true;render();scrollTo(0,0)},
   reoDone(){st.reo=false;render();scrollTo(0,0)},
   autoSort(){
