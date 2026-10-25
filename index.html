@@ -113,6 +113,19 @@ main{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
 .game.played .pair,.game.played .tm{opacity:.55}
 .game.isnext{background:var(--soft)}
 .game .win{font-weight:700}
+.game.reo{grid-template-columns:46px 1fr auto 40px;background:var(--card)}
+.game.reo.played{background:none}
+.game .warn{font-size:12px;color:var(--warn);display:block}
+.handle{width:48px;height:48px;margin:-10px -12px -10px -4px;display:grid;place-items:center;color:var(--muted);touch-action:none;-webkit-user-select:none;user-select:none;cursor:grab}
+.handle svg{width:22px;height:22px}
+.lock{text-align:center;font-size:14px;opacity:.6}
+.game.dragging{position:relative;z-index:3;border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.22);border-bottom-color:transparent}
+.dragmode{-webkit-user-select:none;user-select:none}
+.rowhead{display:flex;justify-content:space-between;align-items:flex-end}
+.link-s{color:var(--accent);font-weight:600;font-size:15px;padding:20px 4px 8px}
+.reobox{padding:14px 16px;margin:12px 0}
+.reobar{display:flex;gap:10px;margin-top:12px}
+.reobar .btn{min-height:44px;font-size:15px}
 /* Tabelle */
 .tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:15px}
 .tbl th{font-size:12px;font-weight:600;color:var(--muted);padding:10px 2px;text-align:center}
@@ -188,7 +201,7 @@ main{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
 <script>
 (()=>{
 'use strict';
-const VERSION='0.1', KEY='turnierplaner.v1';
+const VERSION='0.2', KEY='turnierplaner.v1';
 const PALETTE=['#0a84ff','#e5484d','#30a46c','#f5a524','#8e4ec6','#12a5a5','#f76b15','#d6409f','#795548','#64748b'];
 const SPORTS={
   fb:{name:'Fußball',icon:'⚽',kind:'goals',unit:'Tore',dur:10,pts:'3-1-0',ptsOpts:['3-1-0','2-1-0'],tb:['diff','for','h2h'],draw:true},
@@ -252,8 +265,8 @@ function genSchedule(ids,double){
   const leg1=rounds.flat(), legs=[leg1];
   if(double)legs.push(leg1.map(m=>({h:m.a,a:m.h})));
   const out=[], last={};
-  for(const leg of legs){
-    const rem=[...leg];
+  for(const [li,leg] of legs.entries()){
+    const rem=leg.map(m=>({...m,leg:li+1}));
     while(rem.length){
       const k=out.length; let best=0,bs=-Infinity;
       rem.forEach((m,i)=>{
@@ -265,7 +278,31 @@ function genSchedule(ids,double){
       const m=rem.splice(best,1)[0]; last[m.h]=k; last[m.a]=k; out.push(m);
     }
   }
-  return out.map(m=>({id:uid(),h:m.h,a:m.a,res:null}));
+  return out.map(m=>({id:uid(),h:m.h,a:m.a,leg:m.leg,res:null}));
+}
+/* Gespielte Spiele bleiben an ihrer Stelle, offene werden neu verteilt */
+function autoSort(t){
+  const key=m=>[m.h,m.a].sort().join('|'), seen=new Set(), leg={};
+  t.matches.forEach(m=>{const k=key(m);leg[m.id]=m.leg||(seen.has(k)?2:1);seen.add(k)});
+  const rem=t.matches.filter(m=>!m.res), out=[], last={};
+  t.matches.forEach((m,k)=>{
+    if(m.res){out.push(m);last[m.h]=k;last[m.a]=k;return}
+    const pool=rem.some(x=>leg[x.id]===1)?rem.filter(x=>leg[x.id]===1):rem;
+    let best=pool[0],bs=-Infinity;
+    pool.forEach(x=>{
+      const lh=last[x.h]??-99, la=last[x.a]??-99;
+      const back=(lh===k-1||la===k-1)?1:0;
+      const s=-back*10000+Math.min(k-lh,k-la)*10+(k-lh+k-la)*0.01;
+      if(s>bs){bs=s;best=x}
+    });
+    rem.splice(rem.indexOf(best),1);out.push(best);last[best.h]=k;last[best.a]=k;
+  });
+  t.matches=out;
+}
+function backToBack(t,i){
+  if(i<1)return'';
+  const p=t.matches[i-1], c=t.matches[i];
+  return[c.h,c.a].filter(x=>x===p.h||x===p.a).map(id=>tm(t,id).name).join(' und ');
 }
 
 /* ---------- Wertung ---------- */
@@ -413,15 +450,21 @@ function vTour(t){
   <main class="wrap">${body}</main>
   <nav class="tabs">${tab('plan','Spielplan')}${tab('table','Tabelle')}${tab('teams','Mannschaften')}</nav>`;
 }
-function gameRow(t,g,i,nextId){
+const GRIP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 8h14M5 12h14M5 16h14"/></svg>';
+function gameRow(t,g,i,nextId,reo){
   const r=g.res, hw=r&&r.h>r.a, aw=r&&r.a>r.h;
-  return `<button class="game ${r?'played':''} ${g.id===nextId?'isnext':''}" data-a="result" data-m="${g.id}">
-    <div class="tm">${timeAt(t,i)}</div>
-    <div class="pair"><div class="${hw?'win':''}">${teamLine(t,g.h)}</div><div class="${aw?'win':''}">${teamLine(t,g.a)}</div></div>
-    <div class="sc ${r?'':'open'}">${r?`<span>${r.h}</span><span>${r.a}</span>`:'<span>–</span><span>–</span>'}</div></button>`;
+  const b2b=reo?backToBack(t,i):'';
+  const inner=`<div class="tm">${timeAt(t,i)}</div>
+    <div class="pair"><div class="${hw?'win':''}">${teamLine(t,g.h)}</div><div class="${aw?'win':''}">${teamLine(t,g.a)}</div>${b2b?`<span class="warn">⚠︎ ${esc(b2b)} spielt direkt nacheinander</span>`:''}</div>
+    <div class="sc ${r?'':'open'}">${r?`<span>${r.h}</span><span>${r.a}</span>`:'<span>–</span><span>–</span>'}</div>`;
+  if(reo)return `<div class="game reo ${r?'played':''}" data-id="${g.id}" data-played="${r?1:0}">${inner}${r?'<div class="lock" aria-label="gespielt, fest">🔒</div>':`<div class="handle" aria-label="Zum Verschieben ziehen">${GRIP}</div>`}</div>`;
+  return `<button class="game ${r?'played':''} ${g.id===nextId?'isnext':''}" data-a="result" data-m="${g.id}">${inner}</button>`;
 }
 function vPlan(t){
   const all=t.matches.length, done=t.matches.filter(m=>m.res).length;
+  if(st.reo)return `<div class="card reobox"><b>Reihenfolge ändern</b><div class="sub">Halte ≡ gedrückt und ziehe das Spiel an die gewünschte Stelle. Die Uhrzeiten passen sich an. Gespielte Spiele 🔒 bleiben fest.</div>
+    <div class="reobar"><button class="btn ghost" data-a="autoSort">Automatisch sortieren</button><button class="btn primary" data-a="reoDone">Fertig</button></div></div>
+    <div class="card games" id="reoList">${t.matches.map((g,i)=>gameRow(t,g,i,null,true)).join('')}</div>`;
   const ni=t.matches.findIndex(m=>!m.res), nx=ni>=0?t.matches[ni]:null;
   const top=nx?`<div class="card next"><div class="k">Als Nächstes <span>· ${timeAt(t,ni)} Uhr · Spiel ${ni+1}</span></div>
     <div class="duel"><div class="side">${dot(tm(t,nx.h).color)}<span class="tn">${esc(tm(t,nx.h).name)}</span></div><div class="vs">gegen</div><div class="side">${dot(tm(t,nx.a).color)}<span class="tn">${esc(tm(t,nx.a).name)}</span></div></div>
@@ -429,7 +472,7 @@ function vPlan(t){
     :`<div class="card done"><div class="big2">🏁</div><b>Alle Spiele gespielt</b><p class="sub">Das Endergebnis steht in der Tabelle.</p><button class="btn primary" data-a="tab" data-k="table">Zur Tabelle</button></div>`;
   return `<div class="meta"><span>${SPORTS[t.sport].icon} ${fmtDate(t.date)} · ${clock(mins(t))}–${endAt(t,all)} Uhr</span><span>${done}/${all}</span></div>
   <div class="prog" style="margin:0 4px 14px"><i style="width:${all?done/all*100:0}%"></i></div>
-  ${top}<div class="sec">Alle Spiele</div><div class="card games">${t.matches.map((g,i)=>gameRow(t,g,i,nx&&nx.id)).join('')}</div>`;
+  ${top}<div class="rowhead"><div class="sec">Alle Spiele</div>${all-done>=2?'<button class="link-s" data-a="reo">Reihenfolge ändern</button>':''}</div><div class="card games">${t.matches.map((g,i)=>gameRow(t,g,i,nx&&nx.id)).join('')}</div>`;
 }
 function vTable(t){
   const sp=SPORTS[t.sport], rows=ranking(t), played=t.matches.some(m=>m.res), sets=sp.kind==='sets', minus=t.pts==='2-1-0';
@@ -578,7 +621,13 @@ const A={
   },
   delTeam(el){wz.teams.splice(+el.dataset.i,1);render()},
   cycleColor(el){const x=wz.teams[+el.dataset.i];x.color=PALETTE[(PALETTE.indexOf(x.color)+1)%PALETTE.length];render()},
-  tab(el){st.tab=el.dataset.k;render();scrollTo(0,0)},
+  tab(el){st.tab=el.dataset.k;st.reo=false;render();scrollTo(0,0)},
+  reo(){st.reo=true;render();scrollTo(0,0)},
+  reoDone(){st.reo=false;render();scrollTo(0,0)},
+  autoSort(){
+    if(!confirm('Offene Spiele automatisch neu sortieren? Gespielte Spiele bleiben an ihrer Stelle.'))return;
+    autoSort(get(st.id));save();render();toast('Neu sortiert');
+  },
   toggleTeam(el){st.open[el.dataset.id]=!st.open[el.dataset.id];render()},
   result(el){openResult(el.dataset.m)},
   closeSheet(){closeSheet()},
@@ -643,6 +692,48 @@ document.addEventListener('input',e=>{
   if(el.dataset.num&&rs){const v=el.value.replace(/\D/g,'').slice(0,3);el.value=v;rs[el.dataset.num]=v===''?0:+v;updHint()}
   if(el.dataset.ball&&rs){const[i,j]=el.dataset.ball.split(':').map(Number);const v=el.value.replace(/\D/g,'').slice(0,2);el.value=v;rs.balls[i]=rs.balls[i]||[null,null];rs.balls[i][j]=v===''?null:+v}
 });
+/* ---------- Ziehen im Spielplan ---------- */
+let drag=null;
+document.addEventListener('pointerdown',e=>{
+  const h=e.target.closest('.handle');if(!h||drag)return;
+  e.preventDefault();
+  const row=h.closest('.game'), r=row.getBoundingClientRect();
+  drag={row,list:row.parentElement,y:e.clientY,off:e.clientY-r.top,id:e.pointerId,raf:0};
+  row.classList.add('dragging');document.body.classList.add('dragmode');
+  try{h.setPointerCapture(e.pointerId)}catch(_){}
+  if(navigator.vibrate)try{navigator.vibrate(10)}catch(_){}
+  drag.raf=requestAnimationFrame(dragTick);
+},{passive:false});
+document.addEventListener('pointermove',e=>{if(!drag||e.pointerId!==drag.id)return;e.preventDefault();drag.y=e.clientY;dragPos()},{passive:false});
+document.addEventListener('pointerup',e=>{if(drag&&e.pointerId===drag.id)endDrag()});
+document.addEventListener('pointercancel',e=>{if(drag&&e.pointerId===drag.id)endDrag()});
+document.addEventListener('touchmove',e=>{if(drag)e.preventDefault()},{passive:false});
+function dragPos(){
+  const{row,list,y,off}=drag;
+  row.style.transform='';
+  const others=[...list.children].filter(x=>x!==row);
+  const idx=others.findIndex(x=>{const b=x.getBoundingClientRect();return y<b.top+b.height/2});
+  const ref=idx<0?null:others[idx];
+  if(row.nextElementSibling!==ref)list.insertBefore(row,ref);
+  row.style.transform=`translateY(${y-off-row.getBoundingClientRect().top}px)`;
+}
+function dragTick(){
+  if(!drag)return;
+  const H=window.innerHeight, d=drag.y<130?-9:drag.y>H-150?9:0;
+  if(d){window.scrollBy(0,d);dragPos()}
+  drag.raf=requestAnimationFrame(dragTick);
+}
+function endDrag(){
+  const{row,list,raf}=drag;cancelAnimationFrame(raf);drag=null;
+  row.classList.remove('dragging');row.style.transform='';document.body.classList.remove('dragmode');
+  const t=get(st.id);if(!t)return;
+  const ids=[...list.children].filter(x=>x.dataset.played==='0').map(x=>x.dataset.id);
+  const slots=t.matches.map((m,i)=>m.res?-1:i).filter(i=>i>=0);
+  if(ids.length!==slots.length){render();return}
+  const byId=Object.fromEntries(t.matches.map(m=>[m.id,m])), nm=[...t.matches];
+  slots.forEach((s,j)=>nm[s]=byId[ids[j]]);
+  t.matches=nm;save();render();
+}
 document.addEventListener('focusin',e=>{if(e.target.dataset&&e.target.dataset.num)e.target.select()});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='teamIn'){e.preventDefault();A.addTeam()}});
 
